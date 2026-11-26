@@ -1,0 +1,40 @@
+name: Build cool_fox for Windows
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+
+      # The diagnostics build is the one that reads the switches the plain
+      # release build compiles out: the ray-tracing skip list
+      # (VICTORY_SKIP_PIPELINES, or VICTORY_SKIP_PIPELINES_FILE naming a file of
+      # them), the frame recorder, and the pipeline book of every pipeline a
+      # run drew with. Play-VIctory.cmd looks for the release build by name, so
+      # the batch beside these artifacts looks for this one under the name
+      # victory-diag.exe.
+      - run: cargo build --locked --profile diag -p victory --features diagnostics
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coolfox-windows-x64-diag
+          path: target/diag/victory.exe
+          if-no-files-found: error
+
+      # A plain release build as well: the same code without those switches,
+      # for the runs that want every last megabyte of the card. A failure here
+      # costs only this file.
+      - continue-on-error: true
+        run: cargo build --locked --release -p victory
+      - continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: coolfox-windows-x64
+          path: target/release/victory.exe
+          if-no-files-found: error

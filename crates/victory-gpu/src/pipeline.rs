@@ -470,11 +470,14 @@ pub(crate) fn making() -> u64 {
 #[cfg(all(windows, feature = "diagnostics"))]
 static DROPS: Mutex<Option<HashMap<String, u64>>> = Mutex::new(None);
 
-/// Shader hashes as printed in the pipeline diagnostics.
+/// Shader hashes as printed in the pipeline diagnostics: `VICTORY_SKIP_PIPELINES`
+/// itself, or, when that is empty, the file `VICTORY_SKIP_PIPELINES_FILE` names.
+/// The ray-tracing list of the NVIDIA fork is 1,034 hashes and 17 KB of text, more
+/// than a `cmd` line holds, so it goes in a file. Separators: commas, spaces, newlines.
 #[cfg(all(windows, feature = "diagnostics"))]
 fn parse_skip_hashes(value: &str) -> Vec<String> {
     value
-        .split(',')
+        .split(|sep: char| sep == ',' || sep.is_ascii_whitespace())
         .map(str::trim)
         .filter(|hash| !hash.is_empty())
         .filter_map(|hash| {
@@ -492,12 +495,32 @@ fn parse_skip_hashes(value: &str) -> Vec<String> {
 }
 
 #[cfg(all(windows, feature = "diagnostics"))]
+fn skip_hashes() -> Vec<String> {
+    let mut value = std::env::var("VICTORY_SKIP_PIPELINES").unwrap_or_default();
+    if value.trim().is_empty()
+        && let Some(file) = std::env::var_os("VICTORY_SKIP_PIPELINES_FILE")
+    {
+        match std::fs::read_to_string(&file) {
+            Ok(text) => value = text,
+            Err(why) => {
+                tracing::warn!(file = ?file, %why, "VICTORY_SKIP_PIPELINES_FILE could not be read");
+            }
+        }
+    }
+    let hashes = parse_skip_hashes(&value);
+    if !hashes.is_empty() {
+        tracing::info!(
+            count = hashes.len(),
+            "draws and dispatches whose pipeline holds one of these shaders are skipped"
+        );
+    }
+    hashes
+}
+
+#[cfg(all(windows, feature = "diagnostics"))]
 fn skipped_shader(p: &Pipeline) -> Option<&str> {
     static HASHES: OnceLock<Vec<String>> = OnceLock::new();
-    let hashes = HASHES.get_or_init(|| {
-        let value = std::env::var("VICTORY_SKIP_PIPELINES").unwrap_or_default();
-        parse_skip_hashes(&value)
-    });
+    let hashes = HASHES.get_or_init(skip_hashes);
     if hashes.is_empty() {
         return None;
     }
